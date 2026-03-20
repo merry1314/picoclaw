@@ -39,6 +39,7 @@ type AgentLoop struct {
 	cfg            *config.Config
 	registry       *AgentRegistry
 	state          *state.Manager
+	eventBus       *EventBus
 	running        atomic.Bool
 	summarizing    sync.Map
 	fallback       *providers.FallbackChain
@@ -49,6 +50,7 @@ type AgentLoop struct {
 	mcp            mcpRuntime
 	steering       *steeringQueue
 	mu             sync.RWMutex
+	turnSeq        atomic.Uint64
 	// Track active requests for safe provider cleanup
 	activeRequests sync.WaitGroup
 }
@@ -103,6 +105,7 @@ func NewAgentLoop(
 		cfg:         cfg,
 		registry:    registry,
 		state:       stateManager,
+		eventBus:    NewEventBus(),
 		summarizing: sync.Map{},
 		fallback:    fallbackChain,
 		cmdRegistry: commands.NewRegistry(commands.BuiltinDefinitions()),
@@ -380,6 +383,84 @@ func (al *AgentLoop) Close() {
 	}
 
 	al.GetRegistry().Close()
+	if al.eventBus != nil {
+		al.eventBus.Close()
+	}
+}
+
+// SubscribeEvents registers a subscriber for agent-loop events.
+func (al *AgentLoop) SubscribeEvents(buffer int) EventSubscription {
+	if al == nil || al.eventBus == nil {
+		ch := make(chan Event)
+		close(ch)
+		return EventSubscription{C: ch}
+	}
+	return al.eventBus.Subscribe(buffer)
+}
+
+// UnsubscribeEvents removes a previously registered event subscriber.
+func (al *AgentLoop) UnsubscribeEvents(id uint64) {
+	if al == nil || al.eventBus == nil {
+		return
+	}
+	al.eventBus.Unsubscribe(id)
+}
+
+// EventDrops returns the number of dropped events for the given kind.
+func (al *AgentLoop) EventDrops(kind EventKind) int64 {
+	if al == nil || al.eventBus == nil {
+		return 0
+	}
+	return al.eventBus.Dropped(kind)
+}
+
+type turnEventScope struct {
+	agentID    string
+	sessionKey string
+	turnID     string
+}
+
+func (al *AgentLoop) newTurnEventScope(agentID, sessionKey string) turnEventScope {
+	seq := al.turnSeq.Add(1)
+	return turnEventScope{
+		agentID:    agentID,
+		sessionKey: sessionKey,
+		turnID:     fmt.Sprintf("%s-turn-%d", agentID, seq),
+	}
+}
+
+func (ts turnEventScope) meta(iteration int, source, tracePath string) EventMeta {
+	return EventMeta{
+		AgentID:    ts.agentID,
+		TurnID:     ts.turnID,
+		SessionKey: ts.sessionKey,
+		Iteration:  iteration,
+		Source:     source,
+		TracePath:  tracePath,
+	}
+}
+
+func (al *AgentLoop) emitEvent(kind EventKind, meta EventMeta, payload any) {
+	if al == nil || al.eventBus == nil {
+		return
+	}
+	al.eventBus.Emit(Event{
+		Kind:    kind,
+		Meta:    meta,
+		Payload: payload,
+	})
+}
+
+func cloneEventArguments(args map[string]any) map[string]any {
+	if len(args) == 0 {
+		return nil
+	}
+
+	cloned := make(map[string]any, len(args))
+	for k, v := range args {
+		cloned[k] = v
+	}
+	return cloned
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
@@ -895,6 +976,35 @@ func (al *AgentLoop) runAgentLoop(
 	agent *AgentInstance,
 	opts processOptions,
 ) (string, error) {
+	turnScope := al.newTurnEventScope(agent.ID, opts.SessionKey)
+	turnStartedAt := time.Now()
+	turnIterations := 0
+	turnFinalContentLen := 0
+	turnStatus := TurnEndStatusCompleted
+	defer func() {
+		al.emitEvent(
+			EventKindTurnEnd,
+			turnScope.meta(turnIterations, "runAgentLoop", "turn.end"),
+			TurnEndPayload{
+				Status:          turnStatus,
+				Iterations:      turnIterations,
+				Duration:        time.Since(turnStartedAt),
+				FinalContentLen: turnFinalContentLen,
+			},
+		)
+	}()
+
+	al.emitEvent(
+		EventKindTurnStart,
+		turnScope.meta(0, "runAgentLoop", "turn.start"),
+		TurnStartPayload{
+			Channel:     opts.Channel,
+			ChatID:      opts.ChatID,
+			UserMessage: opts.UserMessage,
+			MediaCount:  len(opts.Media),
+		},
+	)
+
 	// 0. Record last channel for heartbeat notifications (skip internal channels and cli)
 	if opts.Channel != "" && opts.ChatID != "" {
 		if !constants.IsInternalChannel(opts.Channel) {
@@ -952,8 +1062,10 @@ func (al *AgentLoop) runAgentLoop(
 	agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
 	// 3. Run LLM iteration loop
-	finalContent, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
+	finalContent, iteration, err := al.runLLMIteration(ctx, agent, messages, opts, turnScope)
+	turnIterations = iteration
 	if err != nil {
+		turnStatus = TurnEndStatusError
 		return "", err
 	}
 
@@ -964,6 +1076,7 @@ func (al *AgentLoop) runAgentLoop(
 	if finalContent == "" {
 		finalContent = opts.DefaultResponse
 	}
+	turnFinalContentLen = len(finalContent)
 
 	// 5. Save final assistant message to session
 	agent.Sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
@@ -1058,6 +1171,7 @@ func (al *AgentLoop) runLLMIteration(
 	agent *AgentInstance,
 	messages []providers.Message,
 	opts processOptions,
+	turnScope turnEventScope,
 ) (string, int, error) {
 	iteration := 0
 	var finalContent string
@@ -1106,6 +1220,17 @@ func (al *AgentLoop) runLLMIteration(
 
 		// Build tool definitions
 		providerToolDefs := agent.Tools.ToProviderDefs()
+		al.emitEvent(
+			EventKindLLMRequest,
+			turnScope.meta(iteration, "runLLMIteration", "turn.llm.request"),
+			LLMRequestPayload{
+				Model:         activeModel,
+				MessagesCount: len(messages),
+				ToolsCount:    len(providerToolDefs),
+				MaxTokens:     agent.MaxTokens,
+				Temperature:   agent.Temperature,
+			},
+		)
 
 		// Log LLM request details
 		logger.DebugCF("agent", "LLM request",
@@ -1246,6 +1371,14 @@ func (al *AgentLoop) runLLMIteration(
 		}
 
 		if err != nil {
+			al.emitEvent(
+				EventKindError,
+				turnScope.meta(iteration, "runLLMIteration", "turn.error"),
+				ErrorPayload{
+					Stage:   "llm",
+					Message: err.Error(),
+				},
+			)
 			logger.ErrorCF("agent", "LLM call failed",
 				map[string]any{
 					"agent_id":  agent.ID,
@@ -1261,6 +1394,15 @@ func (al *AgentLoop) runLLMIteration(
 			response.Reasoning,
 			opts.Channel,
 			al.targetReasoningChannelID(opts.Channel),
+		)
+		al.emitEvent(
+			EventKindLLMResponse,
+			turnScope.meta(iteration, "runLLMIteration", "turn.llm.response"),
+			LLMResponsePayload{
+				ContentLen:   len(response.Content),
+				ToolCalls:    len(response.ToolCalls),
+				HasReasoning: response.Reasoning != "" || response.ReasoningContent != "",
+			},
 		)
 
 		logger.DebugCF("agent", "LLM response",
@@ -1352,6 +1494,14 @@ func (al *AgentLoop) runLLMIteration(
 					"tool":      tc.Name,
 					"iteration": iteration,
 				})
+			al.emitEvent(
+				EventKindToolExecStart,
+				turnScope.meta(iteration, "runLLMIteration", "turn.tool.start"),
+				ToolExecStartPayload{
+					Tool:      tc.Name,
+					Arguments: cloneEventArguments(tc.Arguments),
+				},
+			)
 
 			// Create async callback for tools that implement AsyncExecutor.
 			asyncCallback := func(_ context.Context, result *tools.ToolResult) {
@@ -1390,6 +1540,7 @@ func (al *AgentLoop) runLLMIteration(
 				})
 			}
 
+			toolStart := time.Now()
 			toolResult := agent.Tools.ExecuteWithContext(
 				ctx,
 				tc.Name,
@@ -1398,6 +1549,7 @@ func (al *AgentLoop) runLLMIteration(
 				opts.ChatID,
 				asyncCallback,
 			)
+			toolDuration := time.Since(toolStart)
 
 			// Process tool result
 			if !toolResult.Silent && toolResult.ForUser != "" && opts.SendResponse {
@@ -1443,6 +1595,18 @@ func (al *AgentLoop) runLLMIteration(
 				Content:    contentForLLM,
 				ToolCallID: tc.ID,
 			}
+			al.emitEvent(
+				EventKindToolExecEnd,
+				turnScope.meta(iteration, "runLLMIteration", "turn.tool.end"),
+				ToolExecEndPayload{
+					Tool:       tc.Name,
+					Duration:   toolDuration,
+					ForLLMLen:  len(contentForLLM),
+					ForUserLen: len(toolResult.ForUser),
+					IsError:    toolResult.IsError,
+					Async:      toolResult.Async,
+				},
+			)
 			messages = append(messages, toolResultMsg)
 			agent.Sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
 
