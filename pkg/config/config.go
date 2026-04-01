@@ -99,7 +99,7 @@ type BuildInfo struct {
 }
 
 // MarshalJSON implements custom JSON marshaling for Config
-// to omit providers section when empty and session when empty
+// to omit providers section when empty and session when empty.
 func (c *Config) MarshalJSON() ([]byte, error) {
 	type Alias Config
 	aux := &struct {
@@ -109,11 +109,8 @@ func (c *Config) MarshalJSON() ([]byte, error) {
 		Alias: (*Alias)(c),
 	}
 
-	// Only include session if not empty. Deprecated dm_scope is intentionally
-	// omitted so persisted configs converge on dimensions-based session policy.
 	if len(c.Session.Dimensions) > 0 || len(c.Session.IdentityLinks) > 0 {
 		sessionCfg := c.Session
-		sessionCfg.DMScope = ""
 		aux.Session = &sessionCfg
 	}
 
@@ -199,7 +196,6 @@ type AgentBinding struct {
 
 type SessionConfig struct {
 	Dimensions    []string            `json:"dimensions,omitempty"`
-	DMScope       string              `json:"dm_scope,omitempty"` // Deprecated: ignored by the new session policy path.
 	IdentityLinks map[string][]string `json:"identity_links,omitempty"`
 }
 

@@ -32,7 +32,7 @@ type AllocationInput struct {
 func AllocateRouteSession(input AllocationInput) Allocation {
 	scope := buildSessionScope(input)
 	legacySessionAliases := buildLegacySessionAliases(input)
-	legacyMainSessionKey := strings.ToLower(routing.BuildAgentMainSessionKey(input.AgentID))
+	legacyMainSessionKey := strings.ToLower(BuildLegacyMainAlias(input.AgentID))
 	return Allocation{
 		Scope:          scope,
 		SessionKey:     BuildSessionKey(scope),
@@ -85,7 +85,7 @@ func buildSessionScope(input AllocationInput) SessionScope {
 				values["topic"] = "topic:" + strings.ToLower(topicID)
 			}
 		case "sender":
-			senderID := routing.CanonicalSessionIdentityID(
+			senderID := CanonicalSessionIdentityID(
 				inbound.Channel,
 				inbound.SenderID,
 				input.SessionPolicy.IdentityLinks,
@@ -107,11 +107,11 @@ func buildSessionScope(input AllocationInput) SessionScope {
 }
 
 func buildLegacySessionAliases(input AllocationInput) []string {
-	aliases := []string{strings.ToLower(routing.BuildAgentMainSessionKey(input.AgentID))}
+	aliases := []string{strings.ToLower(BuildLegacyMainAlias(input.AgentID))}
 	inbound := input.Context
 
 	if strings.EqualFold(strings.TrimSpace(inbound.ChatType), "direct") {
-		senderID := routing.CanonicalSessionIdentityID(
+		senderID := CanonicalSessionIdentityID(
 			inbound.Channel,
 			inbound.SenderID,
 			input.SessionPolicy.IdentityLinks,
@@ -119,20 +119,10 @@ func buildLegacySessionAliases(input AllocationInput) []string {
 		if senderID == "" {
 			return uniqueAliases(aliases)
 		}
-		for _, dmScope := range []routing.DMScope{
-			routing.DMScopePerPeer,
-			routing.DMScopePerChannelPeer,
-			routing.DMScopePerAccountChannelPeer,
-		} {
-			aliases = append(aliases, strings.ToLower(routing.BuildAgentPeerSessionKey(routing.SessionKeyParams{
-				AgentID:       input.AgentID,
-				Channel:       inbound.Channel,
-				AccountID:     inbound.Account,
-				Peer:          &routing.RoutePeer{Kind: "direct", ID: senderID},
-				DMScope:       dmScope,
-				IdentityLinks: input.SessionPolicy.IdentityLinks,
-			})))
-		}
+		aliases = append(
+			aliases,
+			BuildLegacyDirectAliases(input.AgentID, inbound.Channel, inbound.Account, senderID)...,
+		)
 		return uniqueAliases(aliases)
 	}
 
@@ -143,15 +133,12 @@ func buildLegacySessionAliases(input AllocationInput) []string {
 	if topicID := strings.TrimSpace(inbound.TopicID); topicID != "" {
 		peerID = peerID + "/" + topicID
 	}
-	aliases = append(aliases, strings.ToLower(routing.BuildAgentPeerSessionKey(routing.SessionKeyParams{
-		AgentID:   input.AgentID,
-		Channel:   inbound.Channel,
-		AccountID: inbound.Account,
-		Peer: &routing.RoutePeer{
-			Kind: strings.ToLower(strings.TrimSpace(inbound.ChatType)),
-			ID:   peerID,
-		},
-	})))
+	aliases = append(aliases, BuildLegacyPeerAlias(
+		input.AgentID,
+		inbound.Channel,
+		strings.ToLower(strings.TrimSpace(inbound.ChatType)),
+		peerID,
+	))
 
 	return uniqueAliases(aliases)
 }

@@ -708,13 +708,9 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	})
 
 	peerKind := "direct"
-	peerID := fmt.Sprintf("%d", user.ID)
 	if message.Chat.Type != "private" {
 		peerKind = "group"
-		peerID = compositeChatID
 	}
-
-	peer := bus.Peer{Kind: peerKind, ID: peerID}
 	messageID := fmt.Sprintf("%d", message.MessageID)
 
 	metadata := map[string]string{
@@ -742,7 +738,6 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 
 	c.HandleMessageWithContext(
 		c.ctx,
-		peer,
 		compositeChatID,
 		content,
 		mediaPaths,

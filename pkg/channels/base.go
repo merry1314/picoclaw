@@ -244,35 +244,8 @@ func (c *BaseChannel) IsAllowedSender(sender bus.SenderInfo) bool {
 	return false
 }
 
-func (c *BaseChannel) HandleMessage(
-	ctx context.Context,
-	peer bus.Peer,
-	messageID, senderID, chatID, content string,
-	media []string,
-	metadata map[string]string,
-	senderOpts ...bus.SenderInfo,
-) {
-	var sender bus.SenderInfo
-	if len(senderOpts) > 0 {
-		sender = senderOpts[0]
-	}
-
-	inboundCtx := bus.ContextFromLegacyInbound(bus.InboundMessage{
-		Channel:   c.name,
-		SenderID:  senderID,
-		Sender:    sender,
-		ChatID:    chatID,
-		Peer:      peer,
-		MessageID: messageID,
-		Metadata:  metadata,
-	})
-
-	c.HandleMessageWithContext(ctx, peer, chatID, content, media, inboundCtx, senderOpts...)
-}
-
 func (c *BaseChannel) HandleMessageWithContext(
 	ctx context.Context,
-	peer bus.Peer,
 	deliveryChatID, content string,
 	media []string,
 	inboundCtx bus.InboundContext,
@@ -315,15 +288,10 @@ func (c *BaseChannel) HandleMessageWithContext(
 	scope := BuildMediaScope(c.name, deliveryChatID, inboundCtx.MessageID)
 
 	msg := bus.InboundMessage{
-		Channel:    c.name,
-		SenderID:   resolvedSenderID,
-		Sender:     sender,
-		ChatID:     deliveryChatID,
 		Context:    inboundCtx,
+		Sender:     sender,
 		Content:    content,
 		Media:      media,
-		Peer:       peer,
-		MessageID:  inboundCtx.MessageID,
 		MediaScope: scope,
 	}
 	msg = bus.NormalizeInboundMessage(msg)
@@ -367,6 +335,18 @@ func (c *BaseChannel) HandleMessageWithContext(
 			"error":   err.Error(),
 		})
 	}
+}
+
+// HandleInboundContext publishes a normalized inbound message using only the
+// structured context.
+func (c *BaseChannel) HandleInboundContext(
+	ctx context.Context,
+	deliveryChatID, content string,
+	media []string,
+	inboundCtx bus.InboundContext,
+	senderOpts ...bus.SenderInfo,
+) {
+	c.HandleMessageWithContext(ctx, deliveryChatID, content, media, inboundCtx, senderOpts...)
 }
 
 func (c *BaseChannel) SetRunning(running bool) {

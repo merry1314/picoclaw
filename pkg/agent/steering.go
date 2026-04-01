@@ -8,7 +8,6 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
-	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
@@ -332,7 +331,7 @@ func (al *AgentLoop) agentForSession(sessionKey string) *AgentInstance {
 		return agent
 	}
 
-	if parsed := routing.ParseAgentSessionKey(sessionKey); parsed != nil {
+	if parsed := session.ParseLegacyAgentSessionKey(sessionKey); parsed != nil {
 		if agent, ok := registry.GetAgent(parsed.AgentID); ok {
 			return agent
 		}

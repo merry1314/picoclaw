@@ -368,13 +368,6 @@ func (c *LINEChannel) processEvent(event lineEvent) {
 		"source_type": event.Source.Type,
 	}
 
-	var peer bus.Peer
-	if isGroup {
-		peer = bus.Peer{Kind: "group", ID: chatID}
-	} else {
-		peer = bus.Peer{Kind: "direct", ID: senderID}
-	}
-
 	logger.DebugCF("line", "Received message", map[string]any{
 		"sender_id":    senderID,
 		"chat_id":      chatID,
@@ -396,7 +389,7 @@ func (c *LINEChannel) processEvent(event lineEvent) {
 	inboundCtx := bus.InboundContext{
 		Channel:   c.Name(),
 		ChatID:    chatID,
-		ChatType:  peer.Kind,
+		ChatType:  map[bool]string{true: "group", false: "direct"}[isGroup],
 		SenderID:  senderID,
 		MessageID: msg.ID,
 		Mentioned: isMentioned,
@@ -411,7 +404,7 @@ func (c *LINEChannel) processEvent(event lineEvent) {
 		}
 	}
 
-	c.HandleMessageWithContext(c.ctx, peer, chatID, content, mediaPaths, inboundCtx, sender)
+	c.HandleInboundContext(c.ctx, chatID, content, mediaPaths, inboundCtx, sender)
 }
 
 // isBotMentioned checks if the bot is mentioned in the message.

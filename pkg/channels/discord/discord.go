@@ -461,13 +461,9 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 	})
 
 	peerKind := "channel"
-	peerID := m.ChannelID
 	if m.GuildID == "" {
 		peerKind = "direct"
-		peerID = senderID
 	}
-
-	peer := bus.Peer{Kind: peerKind, ID: peerID}
 
 	metadata := map[string]string{
 		"user_id":      senderID,
@@ -494,7 +490,7 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 		inboundCtx.ReplyToMessageID = m.MessageReference.MessageID
 	}
 
-	c.HandleMessageWithContext(c.ctx, peer, m.ChannelID, content, mediaPaths, inboundCtx, sender)
+	c.HandleInboundContext(c.ctx, m.ChannelID, content, mediaPaths, inboundCtx, sender)
 }
 
 // startTyping starts a continuous typing indicator loop for the given chatID.

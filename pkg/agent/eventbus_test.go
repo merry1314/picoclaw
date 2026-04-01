@@ -610,12 +610,6 @@ func TestAgentLoop_EmitsFollowUpQueuedEvent(t *testing.T) {
 	if payload.SourceTool != "async_followup" {
 		t.Fatalf("expected source tool async_followup, got %q", payload.SourceTool)
 	}
-	if payload.Channel != "cli" {
-		t.Fatalf("expected channel cli, got %q", payload.Channel)
-	}
-	if payload.ChatID != "direct" {
-		t.Fatalf("expected chat id direct, got %q", payload.ChatID)
-	}
 	if payload.ContentLen != len("background result") {
 		t.Fatalf("expected content len %d, got %d", len("background result"), payload.ContentLen)
 	}

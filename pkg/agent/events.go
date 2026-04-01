@@ -116,8 +116,6 @@ const (
 
 // TurnStartPayload describes the start of a turn.
 type TurnStartPayload struct {
-	Channel     string
-	ChatID      string
 	UserMessage string
 	MediaCount  int
 }
@@ -217,8 +215,6 @@ type SteeringInjectedPayload struct {
 // FollowUpQueuedPayload describes an async follow-up queued back into the inbound bus.
 type FollowUpQueuedPayload struct {
 	SourceTool string
-	Channel    string
-	ChatID     string
 	ContentLen int
 }
 

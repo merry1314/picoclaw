@@ -3,6 +3,7 @@ package routing
 import (
 	"testing"
 
+	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 )
 
@@ -26,9 +27,10 @@ func TestResolveRoute_DefaultAgent_NoBindings(t *testing.T) {
 	cfg := testConfig(nil, nil)
 	r := NewRouteResolver(cfg)
 
-	route := r.ResolveRoute(RouteInput{
-		Channel: "telegram",
-		Peer:    &RoutePeer{Kind: "direct", ID: "user1"},
+	route := r.ResolveRoute(bus.InboundContext{
+		Channel:  "telegram",
+		ChatType: "direct",
+		SenderID: "user1",
 	})
 
 	if route.AgentID != DefaultAgentID {
@@ -63,9 +65,10 @@ func TestResolveRoute_PeerBinding(t *testing.T) {
 	cfg := testConfig(agents, bindings)
 	r := NewRouteResolver(cfg)
 
-	route := r.ResolveRoute(RouteInput{
-		Channel: "telegram",
-		Peer:    &RoutePeer{Kind: "direct", ID: "user123"},
+	route := r.ResolveRoute(bus.InboundContext{
+		Channel:  "telegram",
+		ChatType: "direct",
+		SenderID: "user123",
 	})
 
 	if route.AgentID != "support" {
@@ -94,10 +97,12 @@ func TestResolveRoute_GuildBinding(t *testing.T) {
 	cfg := testConfig(agents, bindings)
 	r := NewRouteResolver(cfg)
 
-	route := r.ResolveRoute(RouteInput{
-		Channel: "discord",
-		GuildID: "guild-abc",
-		Peer:    &RoutePeer{Kind: "channel", ID: "ch1"},
+	route := r.ResolveRoute(bus.InboundContext{
+		Channel:   "discord",
+		ChatID:    "ch1",
+		ChatType:  "channel",
+		SpaceID:   "guild-abc",
+		SpaceType: "guild",
 	})
 
 	if route.AgentID != "gaming" {
@@ -126,10 +131,12 @@ func TestResolveRoute_TeamBinding(t *testing.T) {
 	cfg := testConfig(agents, bindings)
 	r := NewRouteResolver(cfg)
 
-	route := r.ResolveRoute(RouteInput{
-		Channel: "slack",
-		TeamID:  "T12345",
-		Peer:    &RoutePeer{Kind: "channel", ID: "C001"},
+	route := r.ResolveRoute(bus.InboundContext{
+		Channel:   "slack",
+		ChatID:    "C001",
+		ChatType:  "channel",
+		SpaceID:   "T12345",
+		SpaceType: "team",
 	})
 
 	if route.AgentID != "work" {
@@ -157,10 +164,11 @@ func TestResolveRoute_AccountBinding(t *testing.T) {
 	cfg := testConfig(agents, bindings)
 	r := NewRouteResolver(cfg)
 
-	route := r.ResolveRoute(RouteInput{
-		Channel:   "telegram",
-		AccountID: "bot2",
-		Peer:      &RoutePeer{Kind: "direct", ID: "user1"},
+	route := r.ResolveRoute(bus.InboundContext{
+		Channel:  "telegram",
+		Account:  "bot2",
+		ChatType: "direct",
+		SenderID: "user1",
 	})
 
 	if route.AgentID != "premium" {
@@ -188,9 +196,10 @@ func TestResolveRoute_ChannelWildcard(t *testing.T) {
 	cfg := testConfig(agents, bindings)
 	r := NewRouteResolver(cfg)
 
-	route := r.ResolveRoute(RouteInput{
-		Channel: "telegram",
-		Peer:    &RoutePeer{Kind: "direct", ID: "user1"},
+	route := r.ResolveRoute(bus.InboundContext{
+		Channel:  "telegram",
+		ChatType: "direct",
+		SenderID: "user1",
 	})
 
 	if route.AgentID != "telegram-bot" {
@@ -228,10 +237,12 @@ func TestResolveRoute_PriorityOrder_PeerBeatsGuild(t *testing.T) {
 	cfg := testConfig(agents, bindings)
 	r := NewRouteResolver(cfg)
 
-	route := r.ResolveRoute(RouteInput{
-		Channel: "discord",
-		GuildID: "guild-1",
-		Peer:    &RoutePeer{Kind: "direct", ID: "user-vip"},
+	route := r.ResolveRoute(bus.InboundContext{
+		Channel:   "discord",
+		ChatType:  "direct",
+		SenderID:  "user-vip",
+		SpaceID:   "guild-1",
+		SpaceType: "guild",
 	})
 
 	if route.AgentID != "vip" {
@@ -258,9 +269,7 @@ func TestResolveRoute_InvalidAgentFallsToDefault(t *testing.T) {
 	cfg := testConfig(agents, bindings)
 	r := NewRouteResolver(cfg)
 
-	route := r.ResolveRoute(RouteInput{
-		Channel: "telegram",
-	})
+	route := r.ResolveRoute(bus.InboundContext{Channel: "telegram"})
 
 	if route.AgentID != "main" {
 		t.Errorf("AgentID = %q, want 'main' (invalid agent should fall to default)", route.AgentID)
@@ -276,9 +285,7 @@ func TestResolveRoute_DefaultAgentSelection(t *testing.T) {
 	cfg := testConfig(agents, nil)
 	r := NewRouteResolver(cfg)
 
-	route := r.ResolveRoute(RouteInput{
-		Channel: "cli",
-	})
+	route := r.ResolveRoute(bus.InboundContext{Channel: "cli"})
 
 	if route.AgentID != "beta" {
 		t.Errorf("AgentID = %q, want 'beta' (marked as default)", route.AgentID)
@@ -293,9 +300,7 @@ func TestResolveRoute_NoDefaultUsesFirst(t *testing.T) {
 	cfg := testConfig(agents, nil)
 	r := NewRouteResolver(cfg)
 
-	route := r.ResolveRoute(RouteInput{
-		Channel: "cli",
-	})
+	route := r.ResolveRoute(bus.InboundContext{Channel: "cli"})
 
 	if route.AgentID != "alpha" {
 		t.Errorf("AgentID = %q, want 'alpha' (first in list)", route.AgentID)

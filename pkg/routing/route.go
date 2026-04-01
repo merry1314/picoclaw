@@ -3,23 +3,19 @@ package routing
 import (
 	"strings"
 
+	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 )
-
-// RouteInput contains the routing context from an inbound message.
-type RouteInput struct {
-	Channel    string
-	AccountID  string
-	Peer       *RoutePeer
-	ParentPeer *RoutePeer
-	GuildID    string
-	TeamID     string
-}
 
 // SessionPolicy describes how a routed message should be mapped to a session.
 type SessionPolicy struct {
 	Dimensions    []string
 	IdentityLinks map[string][]string
+}
+
+type RoutePeer struct {
+	Kind string
+	ID   string
 }
 
 // ResolvedRoute is the result of agent routing.
@@ -41,14 +37,15 @@ func NewRouteResolver(cfg *config.Config) *RouteResolver {
 	return &RouteResolver{cfg: cfg}
 }
 
-// ResolveRoute determines which agent handles the message and returns the
-// session policy that should be used to allocate session state.
+// ResolveRoute determines which agent handles the message from a normalized
+// inbound context and returns the session policy that should be used to
+// allocate session state.
 // Implements the 7-level priority cascade:
 // peer > parent_peer > guild > team > account > channel_wildcard > default
-func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
-	channel := strings.ToLower(strings.TrimSpace(input.Channel))
-	accountID := NormalizeAccountID(input.AccountID)
-	peer := input.Peer
+func (r *RouteResolver) ResolveRoute(inbound bus.InboundContext) ResolvedRoute {
+	channel := strings.ToLower(strings.TrimSpace(inbound.Channel))
+	accountID := NormalizeAccountID(inbound.Account)
+	peer := routePeerFromContext(inbound)
 
 	sessionPolicy := r.sessionPolicy()
 
@@ -73,7 +70,7 @@ func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
 	}
 
 	// Priority 2: Parent peer binding
-	parentPeer := input.ParentPeer
+	parentPeer := parentPeerFromContext(inbound)
 	if parentPeer != nil && strings.TrimSpace(parentPeer.ID) != "" {
 		if match := r.findPeerMatch(bindings, parentPeer); match != nil {
 			return choose(match.AgentID, "binding.peer.parent")
@@ -81,7 +78,7 @@ func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
 	}
 
 	// Priority 3: Guild binding
-	guildID := strings.TrimSpace(input.GuildID)
+	guildID := routeGuildIDFromContext(inbound)
 	if guildID != "" {
 		if match := r.findGuildMatch(bindings, guildID); match != nil {
 			return choose(match.AgentID, "binding.guild")
@@ -89,7 +86,7 @@ func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
 	}
 
 	// Priority 4: Team binding
-	teamID := strings.TrimSpace(input.TeamID)
+	teamID := routeTeamIDFromContext(inbound)
 	if teamID != "" {
 		if match := r.findTeamMatch(bindings, teamID); match != nil {
 			return choose(match.AgentID, "binding.team")
@@ -276,6 +273,46 @@ func normalizeSessionDimensions(dimensions []string) []string {
 	return normalized
 }
 
+func routePeerFromContext(ctx bus.InboundContext) *RoutePeer {
+	peerKind := normalizeChannel(strings.TrimSpace(ctx.ChatType))
+	if peerKind == "" || peerKind == "unknown" {
+		return nil
+	}
+
+	peerID := strings.TrimSpace(ctx.ChatID)
+	if peerKind == "direct" && peerID == "" {
+		peerID = strings.TrimSpace(ctx.SenderID)
+	}
+	if peerID == "" {
+		return nil
+	}
+
+	return &RoutePeer{Kind: peerKind, ID: peerID}
+}
+
+func parentPeerFromContext(ctx bus.InboundContext) *RoutePeer {
+	if topicID := strings.TrimSpace(ctx.TopicID); topicID != "" {
+		return &RoutePeer{Kind: "topic", ID: topicID}
+	}
+	return nil
+}
+
+func routeGuildIDFromContext(ctx bus.InboundContext) string {
+	if strings.EqualFold(strings.TrimSpace(ctx.SpaceType), "guild") {
+		return strings.TrimSpace(ctx.SpaceID)
+	}
+	return ""
+}
+
+func routeTeamIDFromContext(ctx bus.InboundContext) string {
+	switch strings.ToLower(strings.TrimSpace(ctx.SpaceType)) {
+	case "team", "workspace":
+		return strings.TrimSpace(ctx.SpaceID)
+	default:
+		return ""
+	}
+}
+
 func cloneIdentityLinks(src map[string][]string) map[string][]string {
 	if len(src) == 0 {
 		return nil
@@ -287,4 +324,8 @@ func cloneIdentityLinks(src map[string][]string) map[string][]string {
 		cloned[canonical] = dup
 	}
 	return cloned
+}
+
+func normalizeChannel(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }

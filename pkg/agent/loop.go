@@ -107,14 +107,6 @@ const (
 	defaultResponse            = "The model returned an empty response. This may indicate a provider error or token limit."
 	toolLimitResponse          = "I've reached `max_tool_iterations` without a final response. Increase `max_tool_iterations` in config.json if this task needs more tool steps."
 	handledToolResponseSummary = "Requested output delivered via tool attachment."
-	sessionKeyAgentPrefix      = "agent:"
-	sessionKeyOpaquePrefix     = "sk_"
-	metadataKeyAccountID       = "account_id"
-	metadataKeyGuildID         = "guild_id"
-	metadataKeyTeamID          = "team_id"
-	metadataKeyReplyToMessage  = "reply_to_message_id"
-	metadataKeyParentPeerKind  = "parent_peer_kind"
-	metadataKeyParentPeerID    = "parent_peer_id"
 )
 
 func NewAgentLoop(
@@ -234,9 +226,9 @@ func registerSharedTools(
 			messageTool.SetSendCallback(func(channel, chatID, content, replyToMessageID string) error {
 				pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer pubCancel()
+				outboundCtx := bus.NewOutboundContext(channel, chatID, replyToMessageID)
 				return msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
-					Channel:          channel,
-					ChatID:           chatID,
+					Context:          outboundCtx,
 					Content:          content,
 					ReplyToMessageID: replyToMessageID,
 				})
@@ -657,8 +649,7 @@ func (al *AgentLoop) PublishResponseIfNeeded(ctx context.Context, channel, chatI
 	}
 
 	al.bus.PublishOutbound(ctx, bus.OutboundMessage{
-		Channel: channel,
-		ChatID:  chatID,
+		Context: bus.NewOutboundContext(channel, chatID, ""),
 		Content: response,
 	})
 	logger.InfoCF("agent", "Published outbound response",
@@ -714,11 +705,7 @@ func outboundContextFromInbound(
 	channel, chatID, replyToMessageID string,
 ) bus.InboundContext {
 	if inbound == nil {
-		return bus.ContextFromLegacyOutbound(bus.OutboundMessage{
-			Channel:          channel,
-			ChatID:           chatID,
-			ReplyToMessageID: replyToMessageID,
-		})
+		return bus.NewOutboundContext(channel, chatID, replyToMessageID)
 	}
 
 	outboundCtx := *cloneInboundContext(inbound)
@@ -736,8 +723,6 @@ func outboundContextFromInbound(
 
 func outboundMessageForTurn(ts *turnState, content string) bus.OutboundMessage {
 	return bus.OutboundMessage{
-		Channel: ts.channel,
-		ChatID:  ts.chatID,
 		Context: outboundContextFromInbound(
 			ts.opts.InboundContext,
 			ts.channel,
@@ -894,8 +879,6 @@ func (al *AgentLoop) logEvent(evt Event) {
 
 	switch payload := evt.Payload.(type) {
 	case TurnStartPayload:
-		fields["channel"] = payload.Channel
-		fields["chat_id"] = payload.ChatID
 		fields["user_len"] = len(payload.UserMessage)
 		fields["media_count"] = payload.MediaCount
 	case TurnEndPayload:
@@ -948,8 +931,6 @@ func (al *AgentLoop) logEvent(evt Event) {
 		fields["total_content_len"] = payload.TotalContentLen
 	case FollowUpQueuedPayload:
 		fields["source_tool"] = payload.SourceTool
-		fields["channel"] = payload.Channel
-		fields["chat_id"] = payload.ChatID
 		fields["content_len"] = payload.ContentLen
 	case InterruptReceivedPayload:
 		fields["interrupt_kind"] = payload.Kind
@@ -1292,8 +1273,7 @@ func (al *AgentLoop) sendTranscriptionFeedback(
 	}
 
 	err := al.channelManager.SendMessage(ctx, bus.OutboundMessage{
-		Channel:          channel,
-		ChatID:           chatID,
+		Context:          bus.NewOutboundContext(channel, chatID, messageID),
 		Content:          feedbackMsg,
 		ReplyToMessageID: messageID,
 	})
@@ -1369,13 +1349,15 @@ func (al *AgentLoop) ProcessDirectWithChannel(
 	}
 
 	msg := bus.InboundMessage{
-		Channel:    channel,
-		SenderID:   "cron",
-		ChatID:     chatID,
+		Context: bus.InboundContext{
+			Channel:  channel,
+			ChatID:   chatID,
+			ChatType: "direct",
+			SenderID: "cron",
+		},
 		Content:    content,
 		SessionKey: sessionKey,
 	}
-	msg.Context = bus.ContextFromLegacyInbound(msg)
 
 	return al.processMessage(ctx, msg)
 }
@@ -1481,7 +1463,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		Channel:           msg.Channel,
 		ChatID:            msg.ChatID,
 		MessageID:         msg.MessageID,
-		ReplyToMessageID:  inboundMetadata(msg, metadataKeyReplyToMessage),
+		ReplyToMessageID:  msg.Context.ReplyToMessageID,
 		SenderID:          msg.SenderID,
 		SenderDisplayName: msg.Sender.DisplayName,
 		UserMessage:       msg.Content,
@@ -1515,18 +1497,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.ResolvedRoute, *AgentInstance, error) {
 	registry := al.GetRegistry()
 	inboundCtx := normalizedInboundContext(msg)
-	channel := strings.TrimSpace(inboundCtx.Channel)
-	if channel == "" {
-		channel = msg.Channel
-	}
-	route := registry.ResolveRoute(routing.RouteInput{
-		Channel:    channel,
-		AccountID:  routeAccountID(msg),
-		Peer:       extractPeer(msg),
-		ParentPeer: extractParentPeer(msg),
-		GuildID:    routeGuildID(msg),
-		TeamID:     routeTeamID(msg),
-	})
+	route := registry.ResolveRoute(inboundCtx)
 
 	agent, ok := registry.GetAgent(route.AgentID)
 	if !ok {
@@ -1551,8 +1522,7 @@ func resolveScopeKey(routeSessionKey, msgSessionKey string) string {
 }
 
 func isExplicitSessionKey(sessionKey string) bool {
-	sessionKey = strings.TrimSpace(strings.ToLower(sessionKey))
-	return strings.HasPrefix(sessionKey, sessionKeyAgentPrefix) || strings.HasPrefix(sessionKey, sessionKeyOpaquePrefix)
+	return session.IsExplicitSessionKey(sessionKey)
 }
 
 func buildSessionAliases(canonicalKey string, keys ...string) []string {
@@ -1621,8 +1591,7 @@ func (al *AgentLoop) requeueInboundMessage(msg bus.InboundMessage) error {
 	pubCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	return al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
-		Channel: msg.Channel,
-		ChatID:  msg.ChatID,
+		Context: msg.Context,
 		Content: msg.Content,
 	})
 }
@@ -1679,7 +1648,7 @@ func (al *AgentLoop) processSystemMessage(
 	}
 
 	// Use the origin session for context
-	sessionKey := routing.BuildAgentMainSessionKey(agent.ID)
+	sessionKey := session.BuildMainSessionKey(agent.ID)
 
 	return al.runAgentLoop(ctx, agent, processOptions{
 		SessionKey:      sessionKey,
@@ -1739,8 +1708,6 @@ func (al *AgentLoop) runAgentLoop(
 
 	if opts.SendResponse && result.finalContent != "" {
 		al.bus.PublishOutbound(ctx, bus.OutboundMessage{
-			Channel: opts.Channel,
-			ChatID:  opts.ChatID,
 			Context: outboundContextFromInbound(
 				opts.InboundContext,
 				opts.Channel,
@@ -1796,8 +1763,7 @@ func (al *AgentLoop) handleReasoning(
 	defer pubCancel()
 
 	if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
-		Channel: channelName,
-		ChatID:  channelID,
+		Context: bus.NewOutboundContext(channelName, channelID, ""),
 		Content: reasoningContent,
 	}); err != nil {
 		// Treat context.DeadlineExceeded / context.Canceled as expected
@@ -1851,8 +1817,6 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 		EventKindTurnStart,
 		ts.eventMeta("runTurn", "turn.start"),
 		TurnStartPayload{
-			Channel:     ts.channel,
-			ChatID:      ts.chatID,
 			UserMessage: ts.userMessage,
 			MediaCount:  len(ts.media),
 		},
@@ -2085,8 +2049,6 @@ turnLoop:
 				Messages:         callMessages,
 				Tools:            providerToolDefs,
 				Options:          llmOpts,
-				Channel:          ts.channel,
-				ChatID:           ts.chatID,
 				GracefulTerminal: gracefulTerminal,
 			})
 			switch decision.normalizedAction() {
@@ -2314,8 +2276,6 @@ turnLoop:
 				Context:  cloneTurnContext(ts.turnCtx),
 				Model:    llmModel,
 				Response: response,
-				Channel:  ts.channel,
-				ChatID:   ts.chatID,
 			})
 			switch decision.normalizedAction() {
 			case HookActionContinue, HookActionModify:
@@ -2346,7 +2306,7 @@ turnLoop:
 			reasoningContent = response.ReasoningContent
 		}
 		go al.handleReasoning(
-			turnCtx,
+			ctx,
 			reasoningContent,
 			ts.channel,
 			al.targetReasoningChannelID(ts.channel),
@@ -2467,8 +2427,6 @@ turnLoop:
 					Context:   cloneTurnContext(ts.turnCtx),
 					Tool:      toolName,
 					Arguments: toolArgs,
-					Channel:   ts.channel,
-					ChatID:    ts.chatID,
 				})
 				switch decision.normalizedAction() {
 				case HookActionContinue, HookActionModify:
@@ -2514,8 +2472,6 @@ turnLoop:
 					Context:   cloneTurnContext(ts.turnCtx),
 					Tool:      toolName,
 					Arguments: toolArgs,
-					Channel:   ts.channel,
-					ChatID:    ts.chatID,
 				})
 				if !approval.Approved {
 					allResponsesHandled = false
@@ -2605,8 +2561,6 @@ turnLoop:
 					ts.scope.meta(toolIteration, "runTurn", "turn.follow_up.queued"),
 					FollowUpQueuedPayload{
 						SourceTool: asyncToolName,
-						Channel:    ts.channel,
-						ChatID:     ts.chatID,
 						ContentLen: len(content),
 					},
 				)
@@ -2614,10 +2568,13 @@ turnLoop:
 				pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer pubCancel()
 				_ = al.bus.PublishInbound(pubCtx, bus.InboundMessage{
-					Channel:  "system",
-					SenderID: fmt.Sprintf("async:%s", asyncToolName),
-					ChatID:   fmt.Sprintf("%s:%s", ts.channel, ts.chatID),
-					Content:  content,
+					Context: bus.InboundContext{
+						Channel:  "system",
+						ChatID:   fmt.Sprintf("%s:%s", ts.channel, ts.chatID),
+						ChatType: "direct",
+						SenderID: fmt.Sprintf("async:%s", asyncToolName),
+					},
+					Content: content,
 				})
 			}
 
@@ -2652,8 +2609,6 @@ turnLoop:
 					Arguments: toolArgs,
 					Result:    toolResult,
 					Duration:  toolDuration,
-					Channel:   ts.channel,
-					ChatID:    ts.chatID,
 				})
 				switch decision.normalizedAction() {
 				case HookActionContinue, HookActionModify:
@@ -2692,9 +2647,13 @@ turnLoop:
 					parts = append(parts, part)
 				}
 				outboundMedia := bus.OutboundMediaMessage{
-					Channel: ts.channel,
-					ChatID:  ts.chatID,
-					Parts:   parts,
+					Context: outboundContextFromInbound(
+						ts.opts.InboundContext,
+						ts.channel,
+						ts.chatID,
+						ts.opts.ReplyToMessageID,
+					),
+					Parts: parts,
 				}
 				if al.channelManager != nil && ts.channel != "" && !constants.IsInternalChannel(ts.channel) {
 					if err := al.channelManager.SendMedia(ctx, outboundMedia); err != nil {
@@ -3756,84 +3715,6 @@ func mapCommandError(result commands.ExecuteResult) string {
 		return fmt.Sprintf("Failed to execute command: %v", result.Err)
 	}
 	return fmt.Sprintf("Failed to execute /%s: %v", result.Command, result.Err)
-}
-
-// extractPeer extracts the routing peer from the inbound message's structured Peer field.
-func extractPeer(msg bus.InboundMessage) *routing.RoutePeer {
-	if msg.Peer.Kind != "" {
-		peerID := msg.Peer.ID
-		if peerID == "" {
-			if msg.Peer.Kind == "direct" {
-				peerID = msg.SenderID
-			} else {
-				peerID = msg.ChatID
-			}
-		}
-		return &routing.RoutePeer{Kind: msg.Peer.Kind, ID: peerID}
-	}
-
-	inboundCtx := normalizedInboundContext(msg)
-	peerKind := strings.TrimSpace(inboundCtx.ChatType)
-	if peerKind == "" {
-		return nil
-	}
-
-	peerID := strings.TrimSpace(inboundCtx.ChatID)
-	if peerKind == "direct" && peerID == "" {
-		peerID = strings.TrimSpace(inboundCtx.SenderID)
-	}
-	if peerID == "" {
-		return nil
-	}
-	return &routing.RoutePeer{Kind: peerKind, ID: peerID}
-}
-
-func inboundMetadata(msg bus.InboundMessage, key string) string {
-	if msg.Metadata == nil {
-		return ""
-	}
-	return msg.Metadata[key]
-}
-
-// extractParentPeer extracts the parent peer (reply-to) from inbound message metadata.
-func extractParentPeer(msg bus.InboundMessage) *routing.RoutePeer {
-	inboundCtx := normalizedInboundContext(msg)
-	if topicID := strings.TrimSpace(inboundCtx.TopicID); topicID != "" {
-		return &routing.RoutePeer{Kind: "topic", ID: topicID}
-	}
-
-	parentKind := inboundMetadata(msg, metadataKeyParentPeerKind)
-	parentID := inboundMetadata(msg, metadataKeyParentPeerID)
-	if parentKind == "" || parentID == "" {
-		return nil
-	}
-	return &routing.RoutePeer{Kind: parentKind, ID: parentID}
-}
-
-func routeAccountID(msg bus.InboundMessage) string {
-	if accountID := strings.TrimSpace(normalizedInboundContext(msg).Account); accountID != "" {
-		return accountID
-	}
-	return inboundMetadata(msg, metadataKeyAccountID)
-}
-
-func routeGuildID(msg bus.InboundMessage) string {
-	inboundCtx := normalizedInboundContext(msg)
-	if strings.EqualFold(strings.TrimSpace(inboundCtx.SpaceType), "guild") {
-		return strings.TrimSpace(inboundCtx.SpaceID)
-	}
-	return inboundMetadata(msg, metadataKeyGuildID)
-}
-
-func routeTeamID(msg bus.InboundMessage) string {
-	inboundCtx := normalizedInboundContext(msg)
-	switch strings.ToLower(strings.TrimSpace(inboundCtx.SpaceType)) {
-	case "team", "workspace":
-		if spaceID := strings.TrimSpace(inboundCtx.SpaceID); spaceID != "" {
-			return spaceID
-		}
-	}
-	return inboundMetadata(msg, metadataKeyTeamID)
 }
 
 // isNativeSearchProvider reports whether the given LLM provider implements

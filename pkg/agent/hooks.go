@@ -94,8 +94,6 @@ type LLMHookRequest struct {
 	Messages         []providers.Message        `json:"messages,omitempty"`
 	Tools            []providers.ToolDefinition `json:"tools,omitempty"`
 	Options          map[string]any             `json:"options,omitempty"`
-	Channel          string                     `json:"channel,omitempty"`
-	ChatID           string                     `json:"chat_id,omitempty"`
 	GracefulTerminal bool                       `json:"graceful_terminal,omitempty"`
 }
 
@@ -117,8 +115,6 @@ type LLMHookResponse struct {
 	Context  *TurnContext           `json:"context,omitempty"`
 	Model    string                 `json:"model"`
 	Response *providers.LLMResponse `json:"response,omitempty"`
-	Channel  string                 `json:"channel,omitempty"`
-	ChatID   string                 `json:"chat_id,omitempty"`
 }
 
 func (r *LLMHookResponse) Clone() *LLMHookResponse {
@@ -137,8 +133,6 @@ type ToolCallHookRequest struct {
 	Context   *TurnContext   `json:"context,omitempty"`
 	Tool      string         `json:"tool"`
 	Arguments map[string]any `json:"arguments,omitempty"`
-	Channel   string         `json:"channel,omitempty"`
-	ChatID    string         `json:"chat_id,omitempty"`
 }
 
 func (r *ToolCallHookRequest) Clone() *ToolCallHookRequest {
@@ -157,8 +151,6 @@ type ToolApprovalRequest struct {
 	Context   *TurnContext   `json:"context,omitempty"`
 	Tool      string         `json:"tool"`
 	Arguments map[string]any `json:"arguments,omitempty"`
-	Channel   string         `json:"channel,omitempty"`
-	ChatID    string         `json:"chat_id,omitempty"`
 }
 
 func (r *ToolApprovalRequest) Clone() *ToolApprovalRequest {
@@ -179,8 +171,6 @@ type ToolResultHookResponse struct {
 	Arguments map[string]any    `json:"arguments,omitempty"`
 	Result    *tools.ToolResult `json:"result,omitempty"`
 	Duration  time.Duration     `json:"duration"`
-	Channel   string            `json:"channel,omitempty"`
-	ChatID    string            `json:"chat_id,omitempty"`
 }
 
 func (r *ToolResultHookResponse) Clone() *ToolResultHookResponse {

@@ -2,62 +2,34 @@ package bus
 
 import "strings"
 
-// ContextFromLegacyOutbound builds a minimal outbound context from the legacy
-// top-level outbound fields. This keeps older outbound publishers working
-// while new publishers gradually start carrying the original InboundContext.
-func ContextFromLegacyOutbound(msg OutboundMessage) InboundContext {
+// NewOutboundContext builds the minimal normalized addressing context required
+// to deliver an outbound text message or reply.
+func NewOutboundContext(channel, chatID, replyToMessageID string) InboundContext {
 	return normalizeInboundContext(InboundContext{
-		Channel:          strings.TrimSpace(msg.Channel),
-		ChatID:           strings.TrimSpace(msg.ChatID),
-		ReplyToMessageID: strings.TrimSpace(msg.ReplyToMessageID),
+		Channel:          strings.TrimSpace(channel),
+		ChatID:           strings.TrimSpace(chatID),
+		ReplyToMessageID: strings.TrimSpace(replyToMessageID),
 	})
 }
 
-// ContextFromLegacyOutboundMedia builds a minimal outbound context for media.
-func ContextFromLegacyOutboundMedia(msg OutboundMediaMessage) InboundContext {
-	return normalizeInboundContext(InboundContext{
-		Channel: strings.TrimSpace(msg.Channel),
-		ChatID:  strings.TrimSpace(msg.ChatID),
-	})
-}
-
-// NormalizeOutboundMessage ensures Context is present and mirrors legacy
-// top-level addressing fields from it so older senders keep working.
+// NormalizeOutboundMessage ensures Context is normalized and keeps convenience
+// mirrors in sync for runtime consumers.
 func NormalizeOutboundMessage(msg OutboundMessage) OutboundMessage {
-	if msg.Context.isZero() {
-		msg.Context = ContextFromLegacyOutbound(msg)
-	} else {
-		msg.Context = normalizeInboundContext(msg.Context)
+	msg.Context = normalizeInboundContext(msg.Context)
+	msg.Channel = msg.Context.Channel
+	msg.ChatID = msg.Context.ChatID
+	if msg.Context.ReplyToMessageID == "" {
+		msg.Context.ReplyToMessageID = strings.TrimSpace(msg.ReplyToMessageID)
 	}
-
-	if msg.Channel == "" {
-		msg.Channel = msg.Context.Channel
-	}
-	if msg.ChatID == "" {
-		msg.ChatID = msg.Context.ChatID
-	}
-	if msg.ReplyToMessageID == "" {
-		msg.ReplyToMessageID = msg.Context.ReplyToMessageID
-	}
-
+	msg.ReplyToMessageID = msg.Context.ReplyToMessageID
 	return msg
 }
 
 // NormalizeOutboundMediaMessage ensures media outbound messages also carry a
-// normalized context while preserving the legacy top-level routing fields.
+// normalized context while keeping convenience mirrors in sync.
 func NormalizeOutboundMediaMessage(msg OutboundMediaMessage) OutboundMediaMessage {
-	if msg.Context.isZero() {
-		msg.Context = ContextFromLegacyOutboundMedia(msg)
-	} else {
-		msg.Context = normalizeInboundContext(msg.Context)
-	}
-
-	if msg.Channel == "" {
-		msg.Channel = msg.Context.Channel
-	}
-	if msg.ChatID == "" {
-		msg.ChatID = msg.Context.ChatID
-	}
-
+	msg.Context = normalizeInboundContext(msg.Context)
+	msg.Channel = msg.Context.Channel
+	msg.ChatID = msg.Context.ChatID
 	return msg
 }

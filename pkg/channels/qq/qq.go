@@ -657,15 +657,7 @@ func (c *QQChannel) handleC2CMessage() event.C2CMessageEventHandler {
 			Raw:       metadata,
 		}
 
-		c.HandleMessageWithContext(
-			c.ctx,
-			bus.Peer{Kind: "direct", ID: senderID},
-			senderID,
-			content,
-			mediaPaths,
-			inboundCtx,
-			sender,
-		)
+		c.HandleInboundContext(c.ctx, senderID, content, mediaPaths, inboundCtx, sender)
 
 		return nil
 	}
@@ -744,15 +736,7 @@ func (c *QQChannel) handleGroupATMessage() event.GroupATMessageEventHandler {
 			Raw:       metadata,
 		}
 
-		c.HandleMessageWithContext(
-			c.ctx,
-			bus.Peer{Kind: "group", ID: data.GroupID},
-			data.GroupID,
-			content,
-			mediaPaths,
-			inboundCtx,
-			sender,
-		)
+		c.HandleInboundContext(c.ctx, data.GroupID, content, mediaPaths, inboundCtx, sender)
 
 		return nil
 	}

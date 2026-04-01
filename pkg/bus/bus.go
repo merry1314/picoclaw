@@ -12,6 +12,12 @@ import (
 // ErrBusClosed is returned when publishing to a closed MessageBus.
 var ErrBusClosed = errors.New("message bus closed")
 
+var (
+	ErrMissingInboundContext       = errors.New("inbound message context is required")
+	ErrMissingOutboundContext      = errors.New("outbound message context is required")
+	ErrMissingOutboundMediaContext = errors.New("outbound media context is required")
+)
+
 const defaultBusBufferSize = 64
 
 // StreamDelegate is implemented by the channel Manager to provide streaming
@@ -80,6 +86,9 @@ func publish[T any](ctx context.Context, mb *MessageBus, ch chan T, msg T) error
 }
 
 func (mb *MessageBus) PublishInbound(ctx context.Context, msg InboundMessage) error {
+	if msg.Context.isZero() {
+		return ErrMissingInboundContext
+	}
 	msg = NormalizeInboundMessage(msg)
 	return publish(ctx, mb, mb.inbound, msg)
 }
@@ -89,6 +98,9 @@ func (mb *MessageBus) InboundChan() <-chan InboundMessage {
 }
 
 func (mb *MessageBus) PublishOutbound(ctx context.Context, msg OutboundMessage) error {
+	if msg.Context.isZero() {
+		return ErrMissingOutboundContext
+	}
 	msg = NormalizeOutboundMessage(msg)
 	return publish(ctx, mb, mb.outbound, msg)
 }
@@ -98,6 +110,9 @@ func (mb *MessageBus) OutboundChan() <-chan OutboundMessage {
 }
 
 func (mb *MessageBus) PublishOutboundMedia(ctx context.Context, msg OutboundMediaMessage) error {
+	if msg.Context.isZero() {
+		return ErrMissingOutboundMediaContext
+	}
 	msg = NormalizeOutboundMediaMessage(msg)
 	return publish(ctx, mb, mb.outboundMedia, msg)
 }

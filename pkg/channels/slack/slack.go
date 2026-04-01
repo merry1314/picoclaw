@@ -356,13 +356,9 @@ func (c *SlackChannel) handleMessageEvent(ev *slackevents.MessageEvent) {
 	}
 
 	peerKind := "channel"
-	peerID := channelID
 	if strings.HasPrefix(channelID, "D") {
 		peerKind = "direct"
-		peerID = senderID
 	}
-
-	peer := bus.Peer{Kind: peerKind, ID: peerID}
 
 	metadata := map[string]string{
 		"message_ts": messageTS,
@@ -394,7 +390,7 @@ func (c *SlackChannel) handleMessageEvent(ev *slackevents.MessageEvent) {
 		inboundCtx.TopicID = threadTS
 	}
 
-	c.HandleMessageWithContext(c.ctx, peer, chatID, content, mediaPaths, inboundCtx, sender)
+	c.HandleInboundContext(c.ctx, chatID, content, mediaPaths, inboundCtx, sender)
 }
 
 func (c *SlackChannel) handleAppMention(ev *slackevents.AppMentionEvent) {
@@ -442,13 +438,9 @@ func (c *SlackChannel) handleAppMention(ev *slackevents.AppMentionEvent) {
 	}
 
 	mentionPeerKind := "channel"
-	mentionPeerID := channelID
 	if strings.HasPrefix(channelID, "D") {
 		mentionPeerKind = "direct"
-		mentionPeerID = senderID
 	}
-
-	mentionPeer := bus.Peer{Kind: mentionPeerKind, ID: mentionPeerID}
 
 	metadata := map[string]string{
 		"message_ts": messageTS,
@@ -472,7 +464,7 @@ func (c *SlackChannel) handleAppMention(ev *slackevents.AppMentionEvent) {
 		Raw:       metadata,
 	}
 
-	c.HandleMessageWithContext(c.ctx, mentionPeer, chatID, content, nil, inboundCtx, mentionSender)
+	c.HandleInboundContext(c.ctx, chatID, content, nil, inboundCtx, mentionSender)
 }
 
 func (c *SlackChannel) handleSlashCommand(event socketmode.Event) {
@@ -520,10 +512,8 @@ func (c *SlackChannel) handleSlashCommand(event socketmode.Event) {
 		"text":      utils.Truncate(content, 50),
 	})
 	peerKind := "channel"
-	peerID := channelID
 	if strings.HasPrefix(channelID, "D") {
 		peerKind = "direct"
-		peerID = senderID
 	}
 	inboundCtx := bus.InboundContext{
 		Channel:   c.Name(),
@@ -536,15 +526,7 @@ func (c *SlackChannel) handleSlashCommand(event socketmode.Event) {
 		Raw:       metadata,
 	}
 
-	c.HandleMessageWithContext(
-		c.ctx,
-		bus.Peer{Kind: peerKind, ID: peerID},
-		chatID,
-		content,
-		nil,
-		inboundCtx,
-		cmdSender,
-	)
+	c.HandleInboundContext(c.ctx, chatID, content, nil, inboundCtx, cmdSender)
 }
 
 func (c *SlackChannel) downloadSlackFile(file slack.File) string {

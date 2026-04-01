@@ -1,11 +1,5 @@
 package bus
 
-// Peer identifies the routing peer for a message (direct, group, channel, etc.)
-type Peer struct {
-	Kind string `json:"kind"` // "direct" | "group" | "channel" | ""
-	ID   string `json:"id"`
-}
-
 // SenderInfo provides structured sender identity information.
 type SenderInfo struct {
 	Platform    string `json:"platform,omitempty"`     // "telegram", "discord", "slack", ...
@@ -16,9 +10,8 @@ type SenderInfo struct {
 }
 
 // InboundContext captures the normalized, platform-agnostic facts about an
-// inbound message. This is the long-term source of truth for routing and
-// session allocation. Legacy top-level fields on InboundMessage remain during
-// the transition and are derived from this context when missing.
+// inbound message. This is the source of truth for routing and session
+// allocation.
 type InboundContext struct {
 	Channel string `json:"channel"`
 	Account string `json:"account,omitempty"`
@@ -43,18 +36,18 @@ type InboundContext struct {
 }
 
 type InboundMessage struct {
-	Channel    string            `json:"channel"`
-	SenderID   string            `json:"sender_id"`
-	Sender     SenderInfo        `json:"sender"`
-	ChatID     string            `json:"chat_id"`
-	Context    InboundContext    `json:"context"`
-	Content    string            `json:"content"`
-	Media      []string          `json:"media,omitempty"`
-	Peer       Peer              `json:"peer"`                  // routing peer
-	MessageID  string            `json:"message_id,omitempty"`  // platform message ID
-	MediaScope string            `json:"media_scope,omitempty"` // media lifecycle scope
-	SessionKey string            `json:"session_key"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
+	Context    InboundContext `json:"context"`
+	Sender     SenderInfo     `json:"sender"`
+	Content    string         `json:"content"`
+	Media      []string       `json:"media,omitempty"`
+	MediaScope string         `json:"media_scope,omitempty"` // media lifecycle scope
+	SessionKey string         `json:"session_key"`
+
+	// Convenience mirrors derived from Context for runtime consumers.
+	Channel   string `json:"channel"`
+	SenderID  string `json:"sender_id"`
+	ChatID    string `json:"chat_id"`
+	MessageID string `json:"message_id,omitempty"` // platform message ID
 }
 
 type OutboundMessage struct {
